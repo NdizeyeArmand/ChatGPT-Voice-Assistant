@@ -1,7 +1,5 @@
 package be.ehb.azureOpenai;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -11,18 +9,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
-import com.microsoft.cognitiveservices.speech.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -34,6 +29,14 @@ import com.azure.ai.openai.models.ChatCompletionsOptions;
 import com.azure.ai.openai.models.ChatMessage;
 import com.azure.ai.openai.models.ChatRole;
 import com.azure.core.credential.AzureKeyCredential;
+import com.microsoft.cognitiveservices.speech.CancellationReason;
+import com.microsoft.cognitiveservices.speech.ResultReason;
+import com.microsoft.cognitiveservices.speech.SpeechConfig;
+import com.microsoft.cognitiveservices.speech.SpeechRecognitionResult;
+import com.microsoft.cognitiveservices.speech.SpeechRecognizer;
+import com.microsoft.cognitiveservices.speech.SpeechSynthesisCancellationDetails;
+import com.microsoft.cognitiveservices.speech.SpeechSynthesisResult;
+import com.microsoft.cognitiveservices.speech.SpeechSynthesizer;
 import com.microsoft.cognitiveservices.speech.audio.AudioConfig;
 
 @SpringBootApplication
@@ -50,8 +53,6 @@ public class Chatbot {
     private static String prompt;
     private static SpeechRecognizer speechRecognizer;
     private static SpeechSynthesizer speechSynthesizer;
-
-    private static CompletableFuture<String> recognitionTask;
 
     public static void main(String[] args) {
         SpringApplication.run(Chatbot.class, args);
@@ -246,7 +247,7 @@ public class Chatbot {
     private static byte[] textToSpeech(String text) throws InterruptedException, ExecutionException {
         SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
         speechConfig.setSpeechSynthesisVoiceName("en-US-DavisNeural"); 
-speechSynthesizer = new SpeechSynthesizer(speechConfig);
+        speechSynthesizer = new SpeechSynthesizer(speechConfig);
         
         if (text.isEmpty()) {
             return new byte[0];
