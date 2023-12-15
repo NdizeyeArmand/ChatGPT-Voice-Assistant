@@ -1,17 +1,11 @@
 package be.ehb.azureOpenai;
 
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.time.format.FormatStyle;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-
+import com.azure.ai.openai.OpenAIClient;
+import com.azure.ai.openai.OpenAIClientBuilder;
+import com.azure.ai.openai.models.*;
+import com.azure.core.credential.AzureKeyCredential;
+import com.microsoft.cognitiveservices.speech.*;
+import com.microsoft.cognitiveservices.speech.audio.AudioConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
@@ -21,23 +15,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.azure.ai.openai.OpenAIClient;
-import com.azure.ai.openai.OpenAIClientBuilder;
-import com.azure.ai.openai.models.ChatChoice;
-import com.azure.ai.openai.models.ChatCompletions;
-import com.azure.ai.openai.models.ChatCompletionsOptions;
-import com.azure.ai.openai.models.ChatMessage;
-import com.azure.ai.openai.models.ChatRole;
-import com.azure.core.credential.AzureKeyCredential;
-import com.microsoft.cognitiveservices.speech.CancellationReason;
-import com.microsoft.cognitiveservices.speech.ResultReason;
-import com.microsoft.cognitiveservices.speech.SpeechConfig;
-import com.microsoft.cognitiveservices.speech.SpeechRecognitionResult;
-import com.microsoft.cognitiveservices.speech.SpeechRecognizer;
-import com.microsoft.cognitiveservices.speech.SpeechSynthesisCancellationDetails;
-import com.microsoft.cognitiveservices.speech.SpeechSynthesisResult;
-import com.microsoft.cognitiveservices.speech.SpeechSynthesizer;
-import com.microsoft.cognitiveservices.speech.audio.AudioConfig;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
+import java.util.*;
+import java.util.concurrent.ExecutionException;
 
 @SpringBootApplication
 @RestController
@@ -103,35 +86,13 @@ public class Chatbot {
     @PostMapping("/startRecording")
     public ResponseEntity<String> startRecording() {
         try {
-        SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
-        speechConfig.setSpeechRecognitionLanguage("en-US");
+            SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
+            speechConfig.setSpeechRecognitionLanguage("en-US");
 
-        Future<SpeechRecognitionResult> recognitionTask = recognizeFromMicrophone(speechConfig);
+            // Start the recognition task
+            recognizeFromMicrophone(speechConfig);
 
-            // Wait for the recognition task to complete
-            SpeechRecognitionResult speechRecognitionResult = recognitionTask.get();
-
-        if (speechRecognitionResult.getReason() == ResultReason.RecognizedSpeech) {
-            prompt = speechRecognitionResult.getText();
-            
-                // Close the speechRecognizer object
-                if (speechRecognizer != null) {
-                    speechRecognizer.stopContinuousRecognitionAsync();
-                    speechRecognizer.close();
-                    speechRecognizer = null;
-                }
-
-                return ResponseEntity.ok(prompt);
-            } else {
-                // Close the speechRecognizer object
-                if (speechRecognizer != null) {
-                    speechRecognizer.stopContinuousRecognitionAsync();
-                    speechRecognizer.close();
-                    speechRecognizer = null;
-                }
-
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
-            }
+            return ResponseEntity.ok("Recording started successfully");
         } catch (Exception e) {
             logger.error("Failed to start recording", e);
 
@@ -145,6 +106,7 @@ public class Chatbot {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
         }
     }
+
 
     @PostMapping("/stopRecording")
     public ResponseEntity<String> stopRecording() {
@@ -161,39 +123,6 @@ public class Chatbot {
         }
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("No recording is currently in progress");
     }
-
-    /*
-    @PostMapping("/startRecording")
-    public ResponseEntity<String> startRecording() {
-        try {
-            SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
-            speechConfig.setSpeechRecognitionLanguage("en-US");
-
-            SpeechRecognitionResult speechRecognitionResult = recognizeFromMicrophone(speechConfig);
-
-            if (speechRecognitionResult.getReason() == ResultReason.RecognizedSpeech) {
-                String prompt = speechRecognitionResult.getText();
-                return ResponseEntity.ok(prompt);
-            } else {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
-            }
-        } catch (Exception e) {
-            logger.error("Failed to start recording", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
-        }
-    }
-
-    private SpeechRecognitionResult recognizeFromMicrophone(SpeechConfig speechConfig) throws InterruptedException, ExecutionException {
-        AudioConfig audioConfig = AudioConfig.fromDefaultMicrophoneInput();
-        SpeechRecognizer recognizer = new SpeechRecognizer(speechConfig, audioConfig);
-
-        logger.info("Speak into your microphone.");
-
-        Future<SpeechRecognitionResult> task = recognizer.recognizeOnceAsync();
-        return task.get();
-    }
-     */
-
     @PostMapping("/startSynthesizing")
     public ResponseEntity<Map<String, Object>> startSynthesizing() {
         try {
@@ -215,15 +144,28 @@ public class Chatbot {
             logger.error("Failed to start and stop synthesizing", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
         }
-        }
-
-        private Future<SpeechRecognitionResult> recognizeFromMicrophone(SpeechConfig speechConfig) {
-        AudioConfig audioConfig = AudioConfig.fromDefaultMicrophoneInput();
-        speechRecognizer = new SpeechRecognizer(speechConfig, audioConfig);
-
-    logger.info("Speak into your microphone.");
-        return speechRecognizer.recognizeOnceAsync();
     }
+
+    private void recognizeFromMicrophone(SpeechConfig speechConfig) {
+        AudioConfig audioConfig = AudioConfig.fromDefaultMicrophoneInput();
+        SpeechRecognizer recognizer = new SpeechRecognizer(speechConfig, audioConfig);
+
+        logger.info("Speak into your microphone.");
+
+        recognizer.recognizing.addEventListener((o, speechRecognitionResultEventArgs) -> {
+            logger.info("Intermediate recognition result: " + speechRecognitionResultEventArgs.getResult().getText());
+        });
+
+        recognizer.recognized.addEventListener((o, speechRecognitionResultEventArgs) -> {
+            if (speechRecognitionResultEventArgs.getResult().getReason() == ResultReason.RecognizedSpeech) {
+                logger.info("Final recognition result: " + speechRecognitionResultEventArgs.getResult().getText());
+                recognizer.stopContinuousRecognitionAsync();
+            }
+        });
+
+        recognizer.startContinuousRecognitionAsync();
+    }
+
 
     private static String queryChatbot(String question) {
 

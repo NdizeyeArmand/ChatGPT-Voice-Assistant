@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 
 public class App 
 {
@@ -81,32 +80,10 @@ public class App
             SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
             speechConfig.setSpeechRecognitionLanguage("en-US");
 
-            Future<SpeechRecognitionResult> recognitionTask = recognizeFromMicrophone(speechConfig);
+            // Start the recognition task
+            recognizeFromMicrophone(speechConfig);
 
-            // Wait for the recognition task to complete
-            SpeechRecognitionResult speechRecognitionResult = recognitionTask.get();
-
-            if (speechRecognitionResult.getReason() == ResultReason.RecognizedSpeech) {
-                prompt = speechRecognitionResult.getText();
-
-                // Close the speechRecognizer object
-                if (speechRecognizer != null) {
-                    speechRecognizer.stopContinuousRecognitionAsync();
-                    speechRecognizer.close();
-                    speechRecognizer = null;
-                }
-
-                return ResponseEntity.ok(prompt);
-            } else {
-                // Close the speechRecognizer object
-                if (speechRecognizer != null) {
-                    speechRecognizer.stopContinuousRecognitionAsync();
-                    speechRecognizer.close();
-                    speechRecognizer = null;
-                }
-
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
-            }
+            return ResponseEntity.ok("Recording started successfully");
         } catch (Exception e) {
             logger.error("Failed to start recording", e);
 
@@ -137,38 +114,6 @@ public class App
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("No recording is currently in progress");
     }
 
-    /*
-    @PostMapping("/startRecording")
-    public ResponseEntity<String> startRecording() {
-        try {
-            SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
-            speechConfig.setSpeechRecognitionLanguage("en-US");
-
-            SpeechRecognitionResult speechRecognitionResult = recognizeFromMicrophone(speechConfig);
-
-            if (speechRecognitionResult.getReason() == ResultReason.RecognizedSpeech) {
-                String prompt = speechRecognitionResult.getText();
-                return ResponseEntity.ok(prompt);
-            } else {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
-            }
-        } catch (Exception e) {
-            logger.error("Failed to start recording", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
-        }
-    }
-
-    private SpeechRecognitionResult recognizeFromMicrophone(SpeechConfig speechConfig) throws InterruptedException, ExecutionException {
-        AudioConfig audioConfig = AudioConfig.fromDefaultMicrophoneInput();
-        SpeechRecognizer recognizer = new SpeechRecognizer(speechConfig, audioConfig);
-
-        logger.info("Speak into your microphone.");
-
-        Future<SpeechRecognitionResult> task = recognizer.recognizeOnceAsync();
-        return task.get();
-    }
-     */
-
     @PostMapping("/startSynthesizing")
     public ResponseEntity<Map<String, Object>> startSynthesizing() {
         try {
@@ -192,13 +137,26 @@ public class App
         }
     }
 
-    private Future<SpeechRecognitionResult> recognizeFromMicrophone(SpeechConfig speechConfig) {
+    private void recognizeFromMicrophone(SpeechConfig speechConfig) {
         AudioConfig audioConfig = AudioConfig.fromDefaultMicrophoneInput();
-        speechRecognizer = new SpeechRecognizer(speechConfig, audioConfig);
+        SpeechRecognizer recognizer = new SpeechRecognizer(speechConfig, audioConfig);
 
         logger.info("Speak into your microphone.");
-        return speechRecognizer.recognizeOnceAsync();
+
+        recognizer.recognizing.addEventListener((o, speechRecognitionResultEventArgs) -> {
+            logger.info("Intermediate recognition result: " + speechRecognitionResultEventArgs.getResult().getText());
+        });
+
+        recognizer.recognized.addEventListener((o, speechRecognitionResultEventArgs) -> {
+            if (speechRecognitionResultEventArgs.getResult().getReason() == ResultReason.RecognizedSpeech) {
+                logger.info("Final recognition result: " + speechRecognitionResultEventArgs.getResult().getText());
+                recognizer.stopContinuousRecognitionAsync();
+            }
+        });
+
+        recognizer.startContinuousRecognitionAsync();
     }
+
 
     private static String queryChatbot(String question) {
 
