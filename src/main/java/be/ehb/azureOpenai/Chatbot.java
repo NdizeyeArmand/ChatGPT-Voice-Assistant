@@ -161,32 +161,32 @@ public class Chatbot {
         stopTranslationWithFileSemaphore = new Semaphore(0);
 
         speechRecognizer.recognizing.addEventListener((s, e) -> {
-            System.out.println("RECOGNIZING: Text=" + e.getResult().getText());
+            prompt = e.getResult().getText();
         });
 
         speechRecognizer.recognized.addEventListener((s, e) -> {
             if (e.getResult().getReason() == ResultReason.RecognizedSpeech) {
-                prompt = e.getResult().getText();
+                logger.info("RECOGNIZED: Text=" + e.getResult().getText());
             }
             else if (e.getResult().getReason() == ResultReason.NoMatch) {
-                System.out.println("NOMATCH: Speech could not be recognized.");
+                logger.info("NOMATCH: Speech could not be recognized.");
             }
         });
 
         speechRecognizer.canceled.addEventListener((s, e) -> {
-            System.out.println("CANCELED: Reason=" + e.getReason());
+            logger.info("CANCELED: Reason=" + e.getReason());
 
             if (e.getReason() == CancellationReason.Error) {
-                System.out.println("CANCELED: ErrorCode=" + e.getErrorCode());
-                System.out.println("CANCELED: ErrorDetails=" + e.getErrorDetails());
-                System.out.println("CANCELED: Did you set the speech resource key and region values?");
+                logger.error("CANCELED: ErrorCode=" + e.getErrorCode());
+                logger.error("CANCELED: ErrorDetails=" + e.getErrorDetails());
+                logger.error("CANCELED: Did you set the speech resource key and region values?");
             }
 
             stopTranslationWithFileSemaphore.release();
         });
 
         speechRecognizer.sessionStopped.addEventListener((s, e) -> {
-            System.out.println("\n    Session stopped event.");
+            logger.info("\n    Session stopped event.");
             stopTranslationWithFileSemaphore.release();
         });
     }
