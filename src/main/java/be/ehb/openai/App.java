@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Semaphore;
 
 public class App 
 {
@@ -24,75 +25,38 @@ public class App
     private static final String apiKey = System.getenv("OPENAI_KEY");
 
     private static final Logger logger = LoggerFactory.getLogger(Chatbot.class);
+    private static byte[] audioData;
     private static String prompt;
+    private static String response;
     private static SpeechRecognizer speechRecognizer;
     private static SpeechSynthesizer speechSynthesizer;
+    private static SpeechSynthesisResult result;
+    private static Semaphore stopTranslationWithFileSemaphore;
 
     public static void main(String[] args) {
         SpringApplication.run(Chatbot.class, args);
     }
 
-    /*
-    @GetMapping("/logs")
-    public String getLogs() {
-        // Capture the logs in a ByteArrayOutputStream
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        PrintStream ps = new PrintStream(baos);
-        logger.info("Fetching logs...");
-        logger.info("Additional log statements if needed");
-
-        // Redirect System.out to the ByteArrayOutputStream
-        PrintStream oldOut = System.out;
-        System.setOut(ps);
-
-        // Print the logs
-        logger.info("Printing logs...");
-        logger.warn("This is a warning log");
-        logger.error("This is an error log");
-
-        // Restore System.out
-        System.out.flush();
-        System.setOut(oldOut);
-
-        // Get the logs from the ByteArrayOutputStream as a string
-        String logs = baos.toString();
-
-        // Return the logs as part of the API response
-        return logs;
-    }
-
-    @GetMapping("/health")
-    public ResponseEntity<String> checkHealth() {
-        // Implement your health check logic here
-        boolean isHealthy = true;
-
-        if (isHealthy) {
-            return ResponseEntity.ok("Healthy");
-        } else {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Unhealthy");
-        }
-    }
-    */
-
     @PostMapping("/startRecording")
     public ResponseEntity<String> startRecording() {
         try {
+            // First initialize the semaphore.
+            init();
+
             SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
-            speechConfig.setSpeechRecognitionLanguage("en-US");
+            String speechRecognitionLanguage = "en-US";
+            speechConfig.setSpeechRecognitionLanguage(speechRecognitionLanguage);
 
             // Start the recognition task
-            recognizeFromMicrophone(speechConfig);
+            AudioConfig audioConfig = AudioConfig.fromDefaultMicrophoneInput();
+            speechRecognizer = new SpeechRecognizer(speechConfig, audioConfig);
 
-            return ResponseEntity.ok("Recording started successfully");
+            logger.info("Speak into your microphone.");
+            speechRecognizer.startContinuousRecognitionAsync().get();
+
+            return ResponseEntity.ok(prompt);
         } catch (Exception e) {
             logger.error("Failed to start recording", e);
-
-            // Close the speechRecognizer object
-            if (speechRecognizer != null) {
-                speechRecognizer.stopContinuousRecognitionAsync();
-                speechRecognizer.close();
-                speechRecognizer = null;
-            }
 
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
         }
@@ -102,9 +66,12 @@ public class App
     public ResponseEntity<String> stopRecording() {
         if (speechRecognizer != null) {
             try {
+                // Waits for completion.
+                stopTranslationWithFileSemaphore.acquire();
+
+                // Stops recognition.
                 speechRecognizer.stopContinuousRecognitionAsync().get();
-                speechRecognizer.close();
-                speechRecognizer = null;
+
                 return ResponseEntity.ok("Recording stopped successfully");
             } catch (InterruptedException | ExecutionException e) {
                 logger.error("Failed to stop recording", e);
@@ -117,46 +84,35 @@ public class App
     @PostMapping("/startSynthesizing")
     public ResponseEntity<Map<String, Object>> startSynthesizing() {
         try {
-            String chatbotResponse = queryChatbot(prompt);
-            byte[] audioFile = textToSpeech(chatbotResponse);
-
-            if (speechSynthesizer != null) {
-                speechSynthesizer.close();
-                speechSynthesizer = null;
-            }
+            response = queryChatbot(prompt);
+            textToSpeech(response);
 
             // Create a custom response object
             Map<String, Object> responseObject = new HashMap<>();
-            responseObject.put("audioFile", audioFile);
-            responseObject.put("chatbotResponse", chatbotResponse);
+            responseObject.put("audioFile", audioData);
+            responseObject.put("chatbotResponse", response);
 
             return ResponseEntity.ok(responseObject);
         } catch (Exception e) {
-            logger.error("Failed to start and stop synthesizing", e);
+            logger.error("Failed to start synthesizing", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
         }
     }
 
-    private void recognizeFromMicrophone(SpeechConfig speechConfig) {
-        AudioConfig audioConfig = AudioConfig.fromDefaultMicrophoneInput();
-        SpeechRecognizer recognizer = new SpeechRecognizer(speechConfig, audioConfig);
-
-        logger.info("Speak into your microphone.");
-
-        recognizer.recognizing.addEventListener((o, speechRecognitionResultEventArgs) -> {
-            logger.info("Intermediate recognition result: " + speechRecognitionResultEventArgs.getResult().getText());
-        });
-
-        recognizer.recognized.addEventListener((o, speechRecognitionResultEventArgs) -> {
-            if (speechRecognitionResultEventArgs.getResult().getReason() == ResultReason.RecognizedSpeech) {
-                logger.info("Final recognition result: " + speechRecognitionResultEventArgs.getResult().getText());
-                recognizer.stopContinuousRecognitionAsync();
+    @PostMapping("/stopSynthesizing")
+    public ResponseEntity<String> stopSynthesizing() {
+        if (speechSynthesizer != null) {
+            try {
+                speechSynthesizer.close();
+                speechSynthesizer = null;
+                return ResponseEntity.ok("Synthesizing stopped successfully");
+            } catch (Exception e) {
+                logger.error("Failed to stop synthesizing", e);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
             }
-        });
-
-        recognizer.startContinuousRecognitionAsync();
+        }
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("No synthesis is currently in progress");
     }
-
 
     private static String queryChatbot(String question) {
 
@@ -171,30 +127,67 @@ public class App
         return generatedText;
     }
 
-    private static byte[] textToSpeech(String text) throws InterruptedException, ExecutionException {
+    private void init() {
+        stopTranslationWithFileSemaphore = new Semaphore(0);
+
+        speechRecognizer.recognizing.addEventListener((s, e) -> {
+            System.out.println("RECOGNIZING: Text=" + e.getResult().getText());
+        });
+
+        speechRecognizer.recognized.addEventListener((s, e) -> {
+            if (e.getResult().getReason() == ResultReason.RecognizedSpeech) {
+                prompt = e.getResult().getText();
+            }
+            else if (e.getResult().getReason() == ResultReason.NoMatch) {
+                System.out.println("NOMATCH: Speech could not be recognized.");
+            }
+        });
+
+        speechRecognizer.canceled.addEventListener((s, e) -> {
+            System.out.println("CANCELED: Reason=" + e.getReason());
+
+            if (e.getReason() == CancellationReason.Error) {
+                System.out.println("CANCELED: ErrorCode=" + e.getErrorCode());
+                System.out.println("CANCELED: ErrorDetails=" + e.getErrorDetails());
+                System.out.println("CANCELED: Did you set the speech resource key and region values?");
+            }
+
+            stopTranslationWithFileSemaphore.release();
+        });
+
+        speechRecognizer.sessionStopped.addEventListener((s, e) -> {
+            System.out.println("\n    Session stopped event.");
+            stopTranslationWithFileSemaphore.release();
+        });
+    }
+
+    private static void textToSpeech(String text) {
         SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
-        speechConfig.setSpeechSynthesisVoiceName("en-US-DavisNeural");
+        String speechSynthesisVoiceName = "en-US-DavisNeural";
+        speechConfig.setSpeechSynthesisVoiceName(speechSynthesisVoiceName);
         speechSynthesizer = new SpeechSynthesizer(speechConfig);
 
         if (text.isEmpty()) {
-            return new byte[0];
+            logger.info("Text is empty");
         }
 
-        SpeechSynthesisResult speechSynthesisResult = speechSynthesizer.SpeakTextAsync(text).get();
+        speechSynthesizer.Synthesizing.addEventListener((o, e) -> {
+            result = e.getResult();
+            audioData = result.getAudioData();
+            result.close();
+        });
 
-        if (speechSynthesisResult.getReason() == ResultReason.SynthesizingAudioCompleted) {
+        if (result.getReason() == ResultReason.SynthesizingAudioCompleted) {
             logger.info("Speech synthesized to speaker for text [" + text + "]");
-            return speechSynthesisResult.getAudioData();
-        } else if (speechSynthesisResult.getReason() == ResultReason.Canceled) {
-            SpeechSynthesisCancellationDetails cancellation = SpeechSynthesisCancellationDetails.fromResult(speechSynthesisResult);
+        } else if (result.getReason() == ResultReason.Canceled) {
+            SpeechSynthesisCancellationDetails cancellation = SpeechSynthesisCancellationDetails.fromResult(result);
             logger.info("CANCELED: Reason=" + cancellation.getReason());
 
-            if (cancellation.getReason() == CancellationReason.Error) {
-                logger.info("CANCELED: ErrorCode=" + cancellation.getErrorCode());
-                logger.info("CANCELED: ErrorDetails=" + cancellation.getErrorDetails());
-                logger.info("CANCELED: Did you set the speech resource key and region values?");
+        if (cancellation.getReason() == CancellationReason.Error) {
+            logger.info("CANCELED: ErrorCode=" + cancellation.getErrorCode());
+            logger.info("CANCELED: ErrorDetails=" + cancellation.getErrorDetails());
+            logger.info("CANCELED: Did you set the speech resource key and region values?");
             }
         }
-        return new byte[0];
     }
 }
