@@ -26,7 +26,7 @@ import java.util.concurrent.Semaphore;
 @SpringBootApplication
 @RestController
 public class Chatbot {
-    
+
     private static final String speechKey = System.getenv("SPEECH_KEY");
     private static final String speechRegion = System.getenv("SPEECH_REGION");
     private static final String key = System.getenv("AZURE_OPENAI_KEY");
@@ -49,15 +49,15 @@ public class Chatbot {
     @PostMapping("/startRecording")
     public ResponseEntity<String> startRecording() {
         try {
-            // First initialize the semaphore.
-            init();
-
             SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
             speechConfig.setSpeechRecognitionLanguage("en-US");
 
-            // Start the recognition task
             AudioConfig audioConfig = AudioConfig.fromDefaultMicrophoneInput();
             speechRecognizer = new SpeechRecognizer(speechConfig, audioConfig);
+
+            stopTranslationWithFileSemaphore = new Semaphore(0);
+
+            init();
 
             logger.info("Speak into your microphone.");
             speechRecognizer.startContinuousRecognitionAsync().get();
@@ -158,7 +158,6 @@ public class Chatbot {
     }
 
     private void init() {
-        stopTranslationWithFileSemaphore = new Semaphore(0);
 
         speechRecognizer.recognizing.addEventListener((s, e) -> {
             prompt = e.getResult().getText();
@@ -171,6 +170,8 @@ public class Chatbot {
             else if (e.getResult().getReason() == ResultReason.NoMatch) {
                 logger.info("NOMATCH: Speech could not be recognized.");
             }
+
+            stopTranslationWithFileSemaphore.release();
         });
 
         speechRecognizer.canceled.addEventListener((s, e) -> {
@@ -186,7 +187,7 @@ public class Chatbot {
         });
 
         speechRecognizer.sessionStopped.addEventListener((s, e) -> {
-            logger.info("\n    Session stopped event.");
+            logger.info("Session stopped event.");
             stopTranslationWithFileSemaphore.release();
         });
     }
