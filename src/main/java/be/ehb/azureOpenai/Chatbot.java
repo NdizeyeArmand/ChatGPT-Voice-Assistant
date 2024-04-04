@@ -31,7 +31,7 @@ public class Chatbot {
     private static final String speechRegion = System.getenv("SPEECH_REGION");
     private static final String key = System.getenv("AZURE_OPENAI_KEY");
     private static final String endpoint = System.getenv("AZURE_OPENAI_ENDPOINT");
-    private static final String deploymentOrModelId = "chatgpt1";
+    private static final String deploymentOrModelId = "chatty";
 
     private static final Logger logger = LoggerFactory.getLogger(Chatbot.class);
     private static byte[] audioData;
@@ -134,27 +134,13 @@ public class Chatbot {
 
         ChatCompletions chatCompletions = client.getChatCompletions(deploymentOrModelId, new ChatCompletionsOptions(chatMessages));
 
-        displayModelCreationInfo(chatCompletions.getId());
         for (ChatChoice choice : chatCompletions.getChoices()) {
             ChatMessage message = choice.getMessage();
-            logger.info("Index: %d, Chat Role: %s.%n", choice.getIndex(), message.getRole());
             logger.info("Message:");
             logger.info(message.getContent());
             return message.getContent();
         }
         return "";
-    }
-
-    private static void displayModelCreationInfo(String modelId) {
-        Instant instant = Instant.now();
-
-        DateTimeFormatter formatter = DateTimeFormatter
-            .ofLocalizedDateTime( FormatStyle.SHORT )
-            .withLocale( Locale.FRANCE )
-            .withZone( ZoneId.systemDefault() );
-        String formattedDate = formatter.format(instant);
-
-        logger.info("Model ID=%s is created at %s.%n", modelId, formattedDate);
     }
 
     private void init() {
@@ -192,7 +178,7 @@ public class Chatbot {
         });
     }
 
-    private static void textToSpeech(String text) {
+    private static void textToSpeech(String text) throws ExecutionException, InterruptedException {
         SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
         String speechSynthesisVoiceName = "en-US-DavisNeural";
         speechConfig.setSpeechSynthesisVoiceName(speechSynthesisVoiceName);
@@ -202,23 +188,17 @@ public class Chatbot {
             logger.info("Text is empty");
         }
 
-        speechSynthesizer.Synthesizing.addEventListener((o, e) -> {
+        // Start the synthesis process
+        speechSynthesizer.SpeakTextAsync(text).get();
+
+        speechSynthesizer.SynthesisCompleted.addEventListener((o, e) -> {
             result = e.getResult();
             audioData = result.getAudioData();
+            logger.info("Synthesis result obtained");
             result.close();
         });
 
-        if (result.getReason() == ResultReason.SynthesizingAudioCompleted) {
-            logger.info("Speech synthesized to speaker for text [" + text + "]");
-        } else if (result.getReason() == ResultReason.Canceled) {
-            SpeechSynthesisCancellationDetails cancellation = SpeechSynthesisCancellationDetails.fromResult(result);
-            logger.info("CANCELED: Reason=" + cancellation.getReason());
-
-            if (cancellation.getReason() == CancellationReason.Error) {
-                logger.info("CANCELED: ErrorCode=" + cancellation.getErrorCode());
-                logger.info("CANCELED: ErrorDetails=" + cancellation.getErrorDetails());
-                logger.info("CANCELED: Did you set the speech resource key and region values?");
-            }
-        }
+        speechSynthesizer.close();
+        speechSynthesizer = null;
     }
 }
